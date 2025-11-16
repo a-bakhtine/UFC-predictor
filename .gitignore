@@ -10,5 +10,5 @@ __pycache__/
 data/raw/*
 !data/raw/.gitkeep
 
-# tester
-scripts/test_db.py
+# testers
+scripts/test*
