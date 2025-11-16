@@ -1,3 +1,7 @@
+# compiled python bytecode
+__pycache__/
+*.pyc
+
 # environments
 .venv/
 .env
@@ -5,3 +9,6 @@
 # data
 data/raw/*
 !data/raw/.gitkeep
+
+# tester
+scripts/test_db.py
