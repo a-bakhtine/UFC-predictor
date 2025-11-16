@@ -140,21 +140,20 @@ def parse_event(event_url: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFram
         except ValueError:
             round_ended = None
 
-        # 4) determine winner_id (rough first pass)
-        # the first column usually has a "W" marker next to the winner.
+        # 4) determine winner_id 
         winner_id = None
-        # <p> tags in this cell usually correspond to fighters
-        first_cell = cols[0]
-        for p in first_cell.find_all("p"):
-            p_text = p.get_text(" ", strip=True)
-            link = p.find("a", href=re.compile("fighter-details"))
-            if not link:
-                continue
-            fid = urlparse.urljoin(UFCSTATS_BASE, link["href"].strip()).split("fighter-details/")[-1].strip("/")
-            #if the text for that line starts with "W", treat it as winner.
-            if p_text.startswith("W"):
-                winner_id = fid
-                break
+
+        # cols[0] is the W/L column
+        wl_cell = cols[0]
+        wl_text = wl_cell.get_text(" ", strip=True).lower()
+
+        # for completed fights, the top fighter is the winner (unless draw/NC/etc.)
+        if "win" in wl_text:
+            winner_id = f1_id
+        else:
+            # upcoming fight / draw / nc / no contest
+            winner_id = None
+
 
         fights_rows.append(
             {
