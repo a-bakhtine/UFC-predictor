@@ -6,5 +6,9 @@ __pycache__/
 .venv/
 .env
 
+# models
+models/*
+!models/.gitkeep
+
 # testers
 scripts/test*
