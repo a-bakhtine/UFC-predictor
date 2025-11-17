@@ -6,31 +6,30 @@ import re
 from datetime import datetime
 from config import logger, UFCSTATS_BASE
 
-
 """
-Goal of file is to scrape and then separate data into the three tables
-Turns HTML to DataFrames
+This file scrapes from UFCstats and then separates its data into the three dataframes:
+fighters, fights, stats
 """
  
 COMPLETED_EVENTS_URL = f"{UFCSTATS_BASE}/statistics/events/completed?page=all"
 
-"""
-Fetch a URL and return BeautifulSoup object (helper for HTTP + parsing)
-"""
 def get_soup(url: str) -> BeautifulSoup:
+    """
+    Fetch a URL
+    Return BeautifulSoup object (helper for HTTP + parsing)
+    """
     logger.info(f"Fetching {url}")
     resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
     resp.raise_for_status() # throw error
     return BeautifulSoup(resp.text, "html.parser")
 
-
-"""
-Scrape the 'Completed Events' page and return a list of event-details URLs
-Each URL looks like: 
-    http://ufcstats.com/event-details/xxxxxxxxxxxxxxxx
-`limit` allows you to only take the first N for testing.
-"""
 def get_completed_event_urls(limit: int | None = None) -> list[str]:
+    """
+    Scrape the 'Completed Events' page and return a list of event-details URLs
+    Each URL looks like: 
+        http://ufcstats.com/event-details/xxxxxxxxxxxxxxxx
+    `limit` allows you to only take the first N for testing.
+    """
     soup = get_soup(COMPLETED_EVENTS_URL)
     event_urls=[]
 
@@ -48,11 +47,11 @@ def get_completed_event_urls(limit: int | None = None) -> list[str]:
     return event_urls
 
 
-"""
-Convert time string to seconds (3:45 -> 225)
-Returns None if missing / malformed
-"""
 def parse_time_to_seconds(time_str: str | None) -> int | None:
+    """
+    Convert time string to seconds (3:45 -> 225)
+    Returns None if missing / malformed
+    """
     if not time_str:
         return None
     
@@ -67,12 +66,11 @@ def parse_time_to_seconds(time_str: str | None) -> int | None:
         return None
  
 
-
-"""
-Parse strings like '23 of 57' into (23, 57) (happens w/ sig/total strikes, TDs)
-Returns (None, None) if can't parse
-""" 
-def parse_x_of_y(text:str | None) -> tuple[int | None, int | None]:
+def parse_x_of_y(text:str | None) -> tuple[int, int] | tuple[None, None]:
+    """
+    Parse strings like '23 of 57' into (23, 57) (happens w/ sig/total strikes, TDs)
+    Returns (None, None) if can't parse
+    """ 
     if not text: 
         return (None, None)
     
@@ -82,11 +80,6 @@ def parse_x_of_y(text:str | None) -> tuple[int | None, int | None]:
     
     return int(m.group(1)), int(m.group(2))
 
-"""
-Scrapes ONE fight-details page from UFCStats and returns a list of
-two dicts, one row / fighter, matching the fighter_stats schema
-Returns [] if stats are missing
-"""
 def parse_fight_stats(
     fight_url: str,
     fight_id: str,
@@ -96,6 +89,11 @@ def parse_fight_stats(
     round_ended: int | None,
     time_ended: str | None,
 ) -> list[dict]:
+    """
+    Scrapes ONE fight-details page from UFCStats and returns a list of
+    two dicts, one row / fighter, matching the fighter_stats schema
+    Returns [] if stats are missing
+    """
     soup = get_soup(fight_url)
 
     # find the 'Totals' table by header labels
@@ -222,14 +220,14 @@ def parse_fight_stats(
     return stats_rows
 
 
-"""
-Scrape one UFCStats event-details page
-Return 3 DFs:
-    - df_fighters:  columns [fighter_id, name]
-    - df_fights:    matches 'fights' table schema (minus odds)
-    - df_stats:     matches 'fighter_stats' schema (stubbed empty for now)
-"""
 def parse_event(event_url: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """
+    Scrape one UFCStats event-details page
+    Return 3 DFs:
+        - df_fighters: columns [fighter_id, name]
+        - df_fights: matches 'fights' table schema (minus odds)
+        - df_stats: matches 'fighter_stats' schema (stubbed empty for now)
+    """
     soup = get_soup(event_url)
 
     # extract event name and date
@@ -258,7 +256,7 @@ def parse_event(event_url: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFram
     fights_rows: list[dict] = []
     stats_rows: list[dict] = []
 
-    # fights table
+    # find fights table
     fight_table = soup.find("table", class_=re.compile("b-fight-details__table"))
     if not fight_table:
         logger.error("Could not find fights table on event page")
@@ -275,8 +273,7 @@ def parse_event(event_url: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFram
         if not cols:
             continue  # skip header/empty rows
 
-        # 1) get fight URL and fight
-        # look for a link whose href contains 'fight-details'
+        # get fight URL and fight
         fight_link = row.find("a", href=re.compile("fight-details"))
         if not fight_link:
             logger.warning("Skipping row without fight-details link")
@@ -285,8 +282,7 @@ def parse_event(event_url: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFram
         fight_url = urlparse.urljoin(UFCSTATS_BASE, fight_link["href"].strip())
         fight_id = fight_url.split("fight-details/")[-1].strip("/")
 
-        # 2) get fighter names + fighter_ids
-        # on event page, each row has two fighter links (top/bottom).
+        # get fighter names + fighter_ids
         fighter_links = row.find_all("a", href=re.compile("fighter-details"))
         if len(fighter_links) != 2:
             logger.warning(f"Expected 2 fighter links, found {len(fighter_links)} in row; skipping")
@@ -304,40 +300,26 @@ def parse_event(event_url: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFram
         fighters_dict[f1_id] = {"fighter_id": f1_id, "name": f1_name}
         fighters_dict[f2_id] = {"fighter_id": f2_id, "name": f2_name}
 
-        # 3) method, round, time & weight_class will be parsed later:
         # last 3 columns are: Method, Round, Time
+        weight_class = cols[-4].get_text(strip=True) if len(cols) >= 4 else None
         method_text= cols[-3].get_text(" ", strip=True) if len(cols) >= 3 else None
         method = method_text.split()[0] if method_text else None
         round_text = cols[-2].get_text(strip=True) if len(cols) >= 2 else None
         time_ended = cols[-1].get_text(strip=True) if len(cols) >= 1 else None
-        weight_class = None
 
-        try:
-            round_ended = int(round_text) if round_text and round_text.isdigit() else None
-        except ValueError:
-            round_ended = None
+        round_ended = int(round_text) if round_text and round_text.isdigit() else None
 
-        # 4) determine winner_id 
-        winner_id = None
-
-        # cols[0] is the W/L column
+        # determine winner from W/L col 
         wl_cell = cols[0]
         wl_text = wl_cell.get_text(" ", strip=True).lower()
-
-        # for completed fights, the top fighter is the winner (unless draw/NC/etc.)
-        if "win" in wl_text:
-            winner_id = f1_id
-        else:
-            # upcoming fight / draw / nc / no contest
-            winner_id = None
-
+        winner_id = f1_id if "win" in wl_text else None
 
         fights_rows.append(
             {
                 "fight_id": fight_id,
                 "event_name": event_name,
                 "event_date": event_date,
-                "weight_class": None,  
+                "weight_class": weight_class,  
                 "fighter1_id": f1_id,
                 "fighter2_id": f2_id,
                 "winner_id": winner_id,
@@ -363,11 +345,9 @@ def parse_event(event_url: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFram
         except Exception as e:
             logger.warning(f"Failed to parse stats for fight {fight_id}: {e}")
 
-
-    
     # build dataframes
     df_fighters = pd.DataFrame(list(fighters_dict.values()))
     df_fights = pd.DataFrame(fights_rows)
-    df_stats = pd.DataFrame(stats_rows) # empty until fight-details parsing done
+    df_stats = pd.DataFrame(stats_rows) 
 
     return df_fighters, df_fights, df_stats
