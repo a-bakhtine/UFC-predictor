@@ -36,10 +36,10 @@ Based on my research, the factors below are listed in order of importance that s
 
 ## My Implementation Priority List
 1. First Wave
-    - Closing betting odds / implied win probability
     - Basic record and recent form (win streaks, recent finishes, KO losses)
     - General performance metrics (sig strikes landed/absorbed per minute, takedown attempts and accuracy, TDD, control time, submission attempts)
 2. Second Wave
+    - Closing betting odds / implied win probability
     - Age and age difference
     - Total rounds / cage time
     - Style and how they interact with one another
