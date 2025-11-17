@@ -6,9 +6,5 @@ __pycache__/
 .venv/
 .env
 
-# data
-data/raw/*
-!data/raw/.gitkeep
-
 # testers
 scripts/test*
