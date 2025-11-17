@@ -6,6 +6,7 @@ import re
 from datetime import datetime
 from config import logger, UFCSTATS_BASE
 
+
 """
 Goal of file is to scrape and then separate data into the three tables
 Turns HTML to DataFrames
@@ -22,8 +23,9 @@ def get_soup(url: str) -> BeautifulSoup:
     resp.raise_for_status() # throw error
     return BeautifulSoup(resp.text, "html.parser")
 
+
 """
-Scrape the 'Compelted Events' page and return a list of event-details URLs
+Scrape the 'Completed Events' page and return a list of event-details URLs
 Each URL looks like: 
     http://ufcstats.com/event-details/xxxxxxxxxxxxxxxx
 `limit` allows you to only take the first N for testing.
@@ -44,6 +46,181 @@ def get_completed_event_urls(limit: int | None = None) -> list[str]:
 
     logger.info(f"Found {len(event_urls)} completed event URLs")
     return event_urls
+
+
+"""
+Convert time string to seconds (3:45 -> 225)
+Returns None if missing / malformed
+"""
+def parse_time_to_seconds(time_str: str | None) -> int | None:
+    if not time_str:
+        return None
+    
+    time_str = time_str.strip()
+    if time_str in ("--", "0:00"):
+        return 0
+    
+    try:
+        minutes, seconds = time_str.split(":")
+        return int(minutes) * 60 + int(seconds)
+    except Exception:
+        return None
+ 
+
+
+"""
+Parse strings like '23 of 57' into (23, 57) (happens w/ sig/total strikes, TDs)
+Returns (None, None) if can't parse
+""" 
+def parse_x_of_y(text:str | None) -> tuple[int | None, int | None]:
+    if not text: 
+        return (None, None)
+    
+    m = re.search(r"(\d+)\s*of\s*(\d+)", text)
+    if not m: 
+        return (None, None)
+    
+    return int(m.group(1)), int(m.group(2))
+
+"""
+Scrapes ONE fight-details page from UFCStats and returns a list of
+two dicts, one row / fighter, matching the fighter_stats schema
+Returns [] if stats are missing
+"""
+def parse_fight_stats(
+    fight_url: str,
+    fight_id: str,
+    f1_id: str,
+    f2_id: str,
+    winner_id: str | None,
+    round_ended: int | None,
+    time_ended: str | None,
+) -> list[dict]:
+    soup = get_soup(fight_url)
+
+    # find the 'Totals' table by header labels
+    totals_table = None
+    for tbl in soup.find_all("table"):
+        thead = tbl.find("thead", class_="b-fight-details__table-head")
+        tbody = tbl.find("tbody", class_="b-fight-details__table-body")
+        if not thead or not tbody:
+            continue
+
+        header_cells = thead.find_all(["th", "td"])
+        labels = [c.get_text(" ", strip=True).lower() for c in header_cells]
+
+        # needed stats 
+        required = ["fighter", "kd", "sig. str.", "total str.", "td", "sub. att", "ctrl"]
+        if all(any(req in lab for lab in labels) for req in required):
+            totals_table = tbl
+            break
+
+    if totals_table is None:
+        logger.warning(f"No totals table found for fight {fight_id}")
+        return []
+
+    row = tbody.find("tr")
+    if not row:
+        logger.warning(f"No totals row found for fight {fight_id}")
+        return []
+
+    # all stat data in this row
+    cells = row.find_all("td", class_="b-fight-details__table-col")
+
+    # map column indices from header labels 
+    kd_idx = sig_idx = tot_idx = td_idx = sub_idx = ctrl_idx = None
+    for i, lab in enumerate(labels):
+        if lab.startswith("kd"):
+            kd_idx = i
+        elif lab.startswith("sig. str.") and "%" not in lab:
+            sig_idx = i
+        elif lab.startswith("total str."):
+            tot_idx = i
+        elif lab.startswith("td") and "%" not in lab:
+            td_idx = i
+        elif lab.startswith("sub. att"):
+            sub_idx = i
+        elif lab.startswith("ctrl"):
+            ctrl_idx = i
+
+    if None in (kd_idx, sig_idx, tot_idx, td_idx, sub_idx, ctrl_idx):
+        logger.warning(f"Could not map all columns in totals table for fight {fight_id}")
+        return []
+
+    # get text for fighter_index (0/1) from a given cell index
+    def get_cell_text(col_idx: int, fighter_index: int) -> str | None:
+        if col_idx < 0 or col_idx >= len(cells):
+            return None
+        cell = cells[col_idx]
+        ps = cell.find_all("p", class_="b-fight-details__table-text")
+        if fighter_index < 0 or fighter_index >= len(ps):
+            return None
+        return ps[fighter_index].get_text(" ", strip=True)
+
+    fighter_cell = cells[0]
+    links = fighter_cell.find_all("a", href=re.compile("fighter-details"))
+
+    id_order: list[str] = []
+    for a in links:
+        href = a.get("href", "").strip()
+        if href:
+            fid = href.split("fighter-details/")[-1].strip("/")
+            id_order.append(fid)
+
+    index_for_id = {fid: idx for idx, fid in enumerate(id_order)}
+    stats_rows: list[dict] = []
+
+    # compute fight duration once
+    duration_seconds = None
+    if round_ended is not None and time_ended:
+        base = (round_ended - 1) * 5 * 60  # 5 min rounds
+        t = parse_time_to_seconds(time_ended)
+        if t is not None:
+            duration_seconds = base + t
+
+    # build rows for fighter 1 and fighter 2 
+    for fighter_id in [f1_id, f2_id]:
+        idx = index_for_id.get(fighter_id)
+        if idx is None:
+            logger.warning(f"fighter_id {fighter_id} not found in totals table for fight {fight_id}")
+            continue
+
+        kd_text = get_cell_text(kd_idx, idx)
+        sig_text = get_cell_text(sig_idx,idx)
+        tot_text = get_cell_text(tot_idx,idx)
+        td_text  = get_cell_text(td_idx, idx)
+        sub_text = get_cell_text(sub_idx,idx)
+        ctrl_text = get_cell_text(ctrl_idx, idx)
+
+        kd = int(kd_text) if kd_text and kd_text.isdigit() else 0
+        sig_landed, sig_att = parse_x_of_y(sig_text)
+        tot_landed, tot_att = parse_x_of_y(tot_text)
+        td_landed, td_att = parse_x_of_y(td_text)
+        sub_attempts = int(sub_text) if sub_text and sub_text.isdigit() else 0
+        ctrl_seconds = parse_time_to_seconds(ctrl_text) if ctrl_text else None
+
+        is_winner = (fighter_id == winner_id) if winner_id is not None else None
+
+        stats_rows.append(
+            {
+                "fight_id": fight_id,
+                "fighter_id": fighter_id,
+                "is_winner": is_winner,
+                "knockdowns": kd,
+                "sig_strikes_landed": sig_landed,
+                "sig_strikes_attempted": sig_att,
+                "total_strikes_landed": tot_landed,
+                "total_strikes_attempted": tot_att,
+                "td_landed": td_landed,
+                "td_attempts": td_att,
+                "sub_attempts": sub_attempts,
+                "control_time_seconds": ctrl_seconds,
+                "time_fought_seconds": duration_seconds,
+            }
+        )
+
+    return stats_rows
+
 
 """
 Scrape one UFCStats event-details page
@@ -160,22 +337,34 @@ def parse_event(event_url: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFram
                 "fight_id": fight_id,
                 "event_name": event_name,
                 "event_date": event_date,
-                "weight_class": weight_class,
+                "weight_class": None,  
                 "fighter1_id": f1_id,
                 "fighter2_id": f2_id,
                 "winner_id": winner_id,
                 "method": method,
                 "round_ended": round_ended,
                 "time_ended": time_ended,
-                # odds will come from BetMMA later, so set to None for now
                 "fighter1_closing_odds": None,
                 "fighter2_closing_odds": None,
             }
         )
 
-        # TODO (later): call a parse_fight_stats(fight_url, f1_id, f2_id, winner_id, round_ended, time_ended)
-        # and extend stats_rows with per-fighter stats for this fight.
+        try:
+            fight_stats_rows = parse_fight_stats(
+                fight_url=fight_url,
+                fight_id=fight_id,
+                f1_id=f1_id,
+                f2_id=f2_id,
+                winner_id=winner_id,
+                round_ended=round_ended,
+                time_ended=time_ended,
+            )
+            stats_rows.extend(fight_stats_rows)
+        except Exception as e:
+            logger.warning(f"Failed to parse stats for fight {fight_id}: {e}")
 
+
+    
     # build dataframes
     df_fighters = pd.DataFrame(list(fighters_dict.values()))
     df_fights = pd.DataFrame(fights_rows)
