@@ -1,9 +1,9 @@
 import requests
-import urllib.parse as urlparse
 from bs4 import BeautifulSoup
 import pandas as pd
 import re
 from datetime import datetime
+import urllib.parse as urlparse
 from config import logger, UFCSTATS_BASE
 
 """

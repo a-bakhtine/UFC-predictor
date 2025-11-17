@@ -1,6 +1,6 @@
 -- fighters: one row per fighter
 CREATE TABLE fighters (
-    fighter_id TEXT PRIMARY KEY,   -- e.g. '9c897ac0ff08c9cd' from UFCStats URL
+    fighter_id TEXT PRIMARY KEY,   -- '9c897ac0ff08c9cd' from UFCStats URL
     name       TEXT NOT NULL       -- 'Islam Makhachev'
 );
 

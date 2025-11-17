@@ -1,11 +1,30 @@
 from sqlalchemy import text
 from db import get_engine
 from config import logger
-from scrape_ufcstats import parse_event
+from scrape_ufcstats import get_completed_event_urls, parse_event
 
-EVENT_URL = "http://ufcstats.com/event-details/a9df5ae20a97b090"  # test URL
+def _insert_event_data(engine, df_fighters, df_fights, df_stats):
+    """
+    Insert parsed DataFrames for a single event into the DB 
+    """
+    with engine.begin() as conn:
+        if not df_fighters.empty:
+            df_fighters.to_sql("fighters", conn, if_exists="append", index=False)
+            logger.info(f"Inserted {len(df_fighters)} fighters")
+
+        if not df_fights.empty:
+            df_fights.to_sql("fights", conn, if_exists="append", index=False)
+            logger.info(f"Inserted {len(df_fights)} fights")
+
+        if not df_stats.empty:
+            df_stats.to_sql("fighter_stats", conn, if_exists="append", index=False)
+            logger.info(f"Inserted {len(df_stats)} fighter_stats rows")
+
 
 def load_single_event(event_url: str):
+    """
+    **Dev helper: load a UFC event and its data into the database
+    """
     engine = get_engine()
 
     df_fighters, df_fights, df_stats = parse_event(event_url)
@@ -16,22 +35,44 @@ def load_single_event(event_url: str):
         # for now get rid of tables so can re-run without worry of duplication
         logger.info("Truncating fighters, fights, fighter_stats")
         conn.execute(text("TRUNCATE TABLE fighter_stats, fights, fighters CASCADE;"))
+    
+    _insert_event_data(engine, df_fighters, df_fights, df_stats)
 
-        # insert fighters
-        if not df_fighters.empty:
-            df_fighters.to_sql("fighters", conn, if_exists="append", index=False)
-            logger.info(f"Inserted {len(df_fighters)} fighers")
 
-        # insert fights
-        if not df_fights.empty:
-            df_fights.to_sql("fights", conn, if_exists="append", index=False)
-            logger.info(f"Inserted {len(df_fights)} fights")
+def load_recent_events(num_events: int = 5):
+    """
+    Load recent UFC events and their data into the database
+    """
+    engine = get_engine()
+    event_urls = get_completed_event_urls(limit=num_events)
+    
+    logger.info(f"Loading {len(event_urls)} completed events")
+    
+    # clear existing data
+    with engine.begin() as conn:
+        logger.info("Truncating fighters, fights, fighter_stats")
+        conn.execute(text("TRUNCATE TABLE fighter_stats, fights, fighters CASCADE;"))
+    
+    # process each event
+    for url in event_urls:
+        logger.info(f"Processing event {url}")
+        
+        df_fighters, df_fights, df_stats = parse_event(url)
+        logger.info(
+            f"Scraped: {len(df_fighters)} fighters, "
+            f"{len(df_fights)} fights, {len(df_stats)} stats"
+        )
+        # if no fights/stats, probably upcoming / broken event
+        if df_fights.empty or df_stats.empty:
+            logger.info(f"No completed fights/stats for event {url} (likely upcoming). Skipping insert.")
+            continue
 
-        # insert stats **empty for now
-        if not df_stats.empty:
-            df_stats.to_sql("fighter_stats", conn, if_exists="append", index=False)
-            logger.info(f"Inserted {len(df_stats)} fighter_stats rows")
+        # insert data into database
+        _insert_event_data(engine, df_fighters, df_fights, df_stats)
+ 
 
 if __name__ == "__main__":
-    load_single_event(EVENT_URL)
+    # for dev
+    # load_single_event("http://ufcstats.com/event-details/a9df5ae20a97b090")
+    load_recent_events(num_events=5)
             
