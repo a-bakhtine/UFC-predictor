@@ -85,5 +85,5 @@ def load_recent_events(num_events: int = 5):
 if __name__ == "__main__":
     # for dev
     # load_single_event("http://ufcstats.com/event-details/a9df5ae20a97b090")
-    load_recent_events(num_events=200)
+    load_recent_events(num_events=150)
             

@@ -224,9 +224,9 @@ def parse_event(event_url: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFram
     """
     Scrape one UFCStats event-details page
     Return 3 DFs:
-        - df_fighters: columns [fighter_id, name]
-        - df_fights: matches 'fights' table schema (minus odds)
-        - df_stats: matches 'fighter_stats' schema (stubbed empty for now)
+    - df_fighters: columns [fighter_id, name]
+    - df_fights: matches 'fights' table schema (minus odds)
+    - df_stats: matches 'fighter_stats' schema (stubbed empty for now)
     """
     soup = get_soup(event_url)
 
